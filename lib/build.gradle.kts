@@ -15,11 +15,6 @@ kotlin {
     }
 }
 
-java {
-    withJavadocJar()
-    withSourcesJar()
-}
-
 detekt {
     buildUponDefaultConfig = true
     config.setFrom(rootProject.layout.projectDirectory.file("config/detekt/detekt.yml"))
