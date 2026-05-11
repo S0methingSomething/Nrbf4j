@@ -2,8 +2,7 @@ plugins {
     alias(libs.plugins.kotlin.jvm)
     alias(libs.plugins.detekt)
     `java-library`
-    `maven-publish`
-    signing
+    id("com.vanniktech.maven.publish") version "0.34.0"
 }
 
 group = "io.github.s0methingsomething"
@@ -40,43 +39,33 @@ tasks.test {
     }
 }
 
-publishing {
-    publications {
-        create<MavenPublication>("maven") {
-            artifactId = "nrbf4j"
-            from(components["java"])
-            pom {
-                name.set("Nrbf4j")
-                description.set("Kotlin library for parsing and editing MS-NRBF (BinaryFormatter) byte streams")
-                url.set("https://github.com/S0methingSomething/Nrbf4j")
-                licenses {
-                    license {
-                        name.set("MIT License")
-                        url.set("https://opensource.org/licenses/MIT")
-                    }
-                }
-                developers {
-                    developer {
-                        id.set("S0methingSomething")
-                        name.set("S0methingSomething")
-                        url.set("https://github.com/S0methingSomething")
-                    }
-                }
-                scm {
-                    connection.set("scm:git:git://github.com/S0methingSomething/Nrbf4j.git")
-                    developerConnection.set("scm:git:ssh://git@github.com/S0methingSomething/Nrbf4j.git")
-                    url.set("https://github.com/S0methingSomething/Nrbf4j")
-                }
+mavenPublishing {
+    coordinates(group.toString(), "nrbf4j", version.toString())
+
+    publishToMavenCentral()
+    signAllPublications()
+
+    pom {
+        name.set("Nrbf4j")
+        description.set("Kotlin library for parsing and editing MS-NRBF (BinaryFormatter) byte streams")
+        url.set("https://github.com/S0methingSomething/Nrbf4j")
+        licenses {
+            license {
+                name.set("MIT License")
+                url.set("https://opensource.org/licenses/MIT")
             }
         }
+        developers {
+            developer {
+                id.set("S0methingSomething")
+                name.set("S0methingSomething")
+                url.set("https://github.com/S0methingSomething")
+            }
+        }
+        scm {
+            connection.set("scm:git:git://github.com/S0methingSomething/Nrbf4j.git")
+            developerConnection.set("scm:git:ssh://git@github.com/S0methingSomething/Nrbf4j.git")
+            url.set("https://github.com/S0methingSomething/Nrbf4j")
+        }
     }
-}
-
-signing {
-    val signingKey = System.getenv("MAVEN_CENTRAL_GPG_PRIVATE_KEY")
-    val signingPassword = System.getenv("MAVEN_CENTRAL_GPG_PASSPHRASE")
-    if (!signingKey.isNullOrBlank()) {
-        useInMemoryPgpKeys(signingKey, signingPassword)
-    }
-    sign(publishing.publications["maven"])
 }
