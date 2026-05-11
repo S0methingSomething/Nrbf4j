@@ -21,42 +21,39 @@ fun NrbfWriter.binaryArray(
     memberValueBytes: List<Byte>,
 ): NrbfWriter {
     require(lengths.size == rank)
-    buf.add(RecordType.BinaryArray.id.toByte())
-    buf.addAll(writeInt32Le(objectId))
-    buf.add(binaryArrayTypeId.toByte())
-    buf.addAll(writeInt32Le(rank))
+    writeByte(RecordType.BinaryArray.id)
+    writeInt32LeBytes(objectId)
+    writeByte(binaryArrayTypeId)
+    writeInt32LeBytes(rank)
 
     for (len in lengths) {
-        buf.addAll(writeInt32Le(len))
+        writeInt32LeBytes(len)
     }
 
     if (lowerBounds != null) {
         for (lb in lowerBounds) {
-            buf.addAll(writeInt32Le(lb))
+            writeInt32LeBytes(lb)
         }
     }
 
-    buf.add(binaryType.id.toByte())
+    writeByte(binaryType.id)
 
     when (additionalInfo) {
         is PrimitiveType -> {
-            buf.add(additionalInfo.id.toByte())
+            writeByte(additionalInfo.id)
         }
 
         is String -> {
-            val encoded = encodeLengthPrefixedString(additionalInfo)
-            buf.addAll(encoded.toList())
+            writeEncodedString(additionalInfo)
         }
 
         is Pair<*, *> -> {
-            val (typeName, libId) = additionalInfo
-            val encoded = encodeLengthPrefixedString(typeName as String)
-            buf.addAll(encoded.toList())
-            buf.addAll(writeInt32Le(libId as Int))
+            writeEncodedString(additionalInfo.first as String)
+            writeInt32LeBytes(additionalInfo.second as Int)
         }
     }
 
-    buf.addAll(memberValueBytes)
+    memberValueBytes.forEach { writeByte(it.toInt()) }
     return this
 }
 
@@ -67,12 +64,12 @@ fun NrbfWriter.arraySinglePrimitive(
     primitiveType: PrimitiveType,
     values: List<Any>,
 ): NrbfWriter {
-    buf.add(RecordType.ArraySinglePrimitive.id.toByte())
-    buf.addAll(writeInt32Le(values.size))
-    buf.add(primitiveType.id.toByte())
+    writeByte(RecordType.ArraySinglePrimitive.id)
+    writeInt32LeBytes(values.size)
+    writeByte(primitiveType.id)
 
     for (value in values) {
-        buf.addAll(encodePrimitiveBytes(primitiveType, value))
+        writeBytes(encodePrimitiveBytes(primitiveType, value))
     }
     return this
 }
@@ -81,11 +78,10 @@ fun NrbfWriter.arraySinglePrimitive(
  * Writes an [ArraySingleString][RecordType.ArraySingleString] record.
  */
 fun NrbfWriter.arraySingleString(strings: List<String>): NrbfWriter {
-    buf.add(RecordType.ArraySingleString.id.toByte())
-    buf.addAll(writeInt32Le(strings.size))
+    writeByte(RecordType.ArraySingleString.id)
+    writeInt32LeBytes(strings.size)
     for (s in strings) {
-        val encoded = encodeLengthPrefixedString(s)
-        buf.addAll(encoded.toList())
+        writeBytes(encodeLengthPrefixedString(s))
     }
     return this
 }
@@ -94,8 +90,8 @@ fun NrbfWriter.arraySingleString(strings: List<String>): NrbfWriter {
  * Writes an [ArraySingleObject][RecordType.ArraySingleObject] record.
  */
 fun NrbfWriter.arraySingleObject(objectIds: List<Int>): NrbfWriter {
-    buf.add(RecordType.ArraySingleObject.id.toByte())
-    buf.addAll(writeInt32Le(objectIds.size))
+    writeByte(RecordType.ArraySingleObject.id)
+    writeInt32LeBytes(objectIds.size)
     for (id in objectIds) {
         memberReference(id)
     }

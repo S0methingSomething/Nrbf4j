@@ -8,7 +8,6 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 private const val MAX_OBJECT_ID_ALLOCATED = 10_000_000
-private const val OUTPUT_BUFFER_PADDING = 4096
 
 /**
  * Full-editor representation of an MS-NRBF binary stream.
@@ -54,6 +53,14 @@ class NrbfDocument internal constructor(
             val bytes = file.readBytes()
             val scan = scanRecords(bytes)
             return NrbfDocument(bytes, scan.index, scan.objectIdToRow, scan.classLayouts.toMutableMap())
+        }
+
+        /**
+         * Opens a document from an in-memory byte array.
+         */
+        fun open(data: ByteArray): NrbfDocument {
+            val scan = scanRecords(data)
+            return NrbfDocument(data, scan.index, scan.objectIdToRow, scan.classLayouts.toMutableMap())
         }
     }
 
@@ -193,7 +200,7 @@ class NrbfDocument internal constructor(
                             classLayouts[objectId]
                                 ?: throw NrbfFormatException("no layout for ${recordType.name} $objectId")
                         val (regenerated, newRecs) =
-                            regenerateClassDef(recordType, objectId, layout, dirtyFiltered)
+                            regenerateClassDef(recordType, objectId, layout, dirtyFiltered, row)
                         out.write(regenerated)
                         newStrings = newStrings + newRecs
                     }
@@ -459,7 +466,10 @@ class NrbfDocument internal constructor(
         layout: ClassLayout,
         dirtyFiltered: Map<Pair<Int, String>, Any?>,
     ): Pair<ByteArray, List<Pair<Int, String>>> {
-        val memberBytes = mutableListOf<Byte>()
+        val out = ByteArrayOutputStream()
+        out.write(RecordType.ClassWithId.id and BYTE_MASK)
+        writeInt32LeTo(objectId, out)
+        writeInt32LeTo(metadataId, out)
         val newStringRecs = mutableListOf<Pair<Int, String>>()
 
         for (i in layout.memberNames.indices) {
@@ -477,21 +487,21 @@ class NrbfDocument internal constructor(
 
             when {
                 value == null -> {
-                    memberBytes.add(RecordType.ObjectNull.id.toByte())
+                    out.write(RecordType.ObjectNull.id and BYTE_MASK)
                 }
 
                 bt == BinaryType.Primitive -> {
                     val primType = layout.additionalInfos[i] as PrimitiveType
-                    memberBytes.addAll(encodePrimitiveValue(value, primType).toList())
+                    out.write(encodePrimitiveValue(value, primType))
                 }
 
                 bt == BinaryType.String -> {
                     val str = value as? String ?: ""
-                    val encoded = encodeLengthPrefixedString(str)
                     val newId = allocateObjectId()
-                    memberBytes.add(RecordType.BinaryObjectString.id.toByte())
-                    memberBytes.addAll(writeInt32Le(newId))
-                    memberBytes.addAll(encoded.toList())
+                    newStringRecs.add(newId to str)
+                    out.write(RecordType.BinaryObjectString.id and BYTE_MASK)
+                    writeInt32LeTo(newId, out)
+                    encodeLengthPrefixedStringTo(str, out)
                 }
 
                 bt == BinaryType.Class || bt == BinaryType.Object || bt == BinaryType.SystemClass -> {
@@ -499,8 +509,8 @@ class NrbfDocument internal constructor(
                         value as? Int ?: throw NrbfException(
                             "expected reference value for member '$name', got $value",
                         )
-                    memberBytes.add(RecordType.MemberReference.id.toByte())
-                    memberBytes.addAll(writeInt32Le(refId))
+                    out.write(RecordType.MemberReference.id and BYTE_MASK)
+                    writeInt32LeTo(refId, out)
                 }
 
                 else -> {
@@ -508,19 +518,13 @@ class NrbfDocument internal constructor(
                         value as? Int ?: throw NrbfException(
                             "expected reference value for member '$name', got $value",
                         )
-                    memberBytes.add(RecordType.MemberReference.id.toByte())
-                    memberBytes.addAll(writeInt32Le(refId))
+                    out.write(RecordType.MemberReference.id and BYTE_MASK)
+                    writeInt32LeTo(refId, out)
                 }
             }
         }
 
-        val header = mutableListOf<Byte>()
-        header.add(RecordType.ClassWithId.id.toByte())
-        header.addAll(writeInt32Le(objectId))
-        header.addAll(writeInt32Le(metadataId))
-        header.addAll(memberBytes)
-
-        return header.toByteArray() to newStringRecs
+        return out.toByteArray() to newStringRecs
     }
 
     private fun regenerateClassDef(
@@ -528,8 +532,46 @@ class NrbfDocument internal constructor(
         objectId: Int,
         layout: ClassLayout,
         dirtyFiltered: Map<Pair<Int, String>, Any?>,
+        row: Int,
     ): Pair<ByteArray, List<Pair<Int, String>>> {
-        val memberBytes = mutableListOf<Byte>()
+        val out = ByteArrayOutputStream()
+        out.write(recordType.id and BYTE_MASK)
+        writeInt32LeTo(objectId, out)
+        encodeLengthPrefixedStringTo(layout.className, out)
+        writeInt32LeTo(layout.memberNames.size, out)
+
+        for (memberName in layout.memberNames) {
+            encodeLengthPrefixedStringTo(memberName, out)
+        }
+        for (bt in layout.binaryTypes) {
+            out.write(bt.id and BYTE_MASK)
+        }
+        for (i in layout.additionalInfos.indices) {
+            when (val ai = layout.additionalInfos[i]) {
+                is PrimitiveType -> {
+                    out.write(ai.id and BYTE_MASK)
+                }
+
+                is String -> {
+                    encodeLengthPrefixedStringTo(ai, out)
+                }
+
+                is Map<*, *> -> {
+                    val typeName = ai["type_name"] as String
+                    val libId = ai["library_id"] as Int
+                    encodeLengthPrefixedStringTo(typeName, out)
+                    writeInt32LeTo(libId, out)
+                }
+
+                null -> {}
+            }
+        }
+
+        if (recordType == RecordType.ClassWithMembersAndTypes) {
+            val libraryId = index[row + IX_LIBRARY_ID]
+            writeInt32LeTo(libraryId, out)
+        }
+
         val newStringRecs = mutableListOf<Pair<Int, String>>()
 
         for (i in layout.memberNames.indices) {
@@ -547,22 +589,21 @@ class NrbfDocument internal constructor(
 
             when {
                 value == null -> {
-                    memberBytes.add(RecordType.ObjectNull.id.toByte())
+                    out.write(RecordType.ObjectNull.id and BYTE_MASK)
                 }
 
                 bt == BinaryType.Primitive -> {
                     val primType = layout.additionalInfos[i] as PrimitiveType
-                    memberBytes.addAll(encodePrimitiveValue(value, primType).toList())
+                    out.write(encodePrimitiveValue(value, primType))
                 }
 
                 bt == BinaryType.String -> {
                     val str = value as? String ?: ""
-                    val encoded = encodeLengthPrefixedString(str)
                     val newId = allocateObjectId()
                     newStringRecs.add(newId to str)
-                    memberBytes.add(RecordType.BinaryObjectString.id.toByte())
-                    memberBytes.addAll(writeInt32Le(newId))
-                    memberBytes.addAll(encoded.toList())
+                    out.write(RecordType.BinaryObjectString.id and BYTE_MASK)
+                    writeInt32LeTo(newId, out)
+                    encodeLengthPrefixedStringTo(str, out)
                 }
 
                 else -> {
@@ -571,52 +612,13 @@ class NrbfDocument internal constructor(
                             ?: throw NrbfException(
                                 "expected reference value for member '$name', got $value",
                             )
-                    memberBytes.add(RecordType.MemberReference.id.toByte())
-                    memberBytes.addAll(writeInt32Le(refId))
+                    out.write(RecordType.MemberReference.id and BYTE_MASK)
+                    writeInt32LeTo(refId, out)
                 }
             }
         }
 
-        val header = mutableListOf<Byte>()
-        header.add(recordType.id.toByte())
-        header.addAll(writeInt32Le(objectId))
-        header.addAll(encodeLengthPrefixedString(layout.className).toList())
-        header.addAll(writeInt32Le(layout.memberNames.size))
-
-        for (memberName in layout.memberNames) {
-            header.addAll(encodeLengthPrefixedString(memberName).toList())
-        }
-        for (bt in layout.binaryTypes) {
-            header.add(bt.id.toByte())
-        }
-        for (i in layout.additionalInfos.indices) {
-            when (val ai = layout.additionalInfos[i]) {
-                is PrimitiveType -> {
-                    header.add(ai.id.toByte())
-                }
-
-                is String -> {
-                    header.addAll(encodeLengthPrefixedString(ai).toList())
-                }
-
-                is Map<*, *> -> {
-                    val typeName = ai["type_name"] as String
-                    val libId = ai["library_id"] as Int
-                    header.addAll(encodeLengthPrefixedString(typeName).toList())
-                    header.addAll(writeInt32Le(libId))
-                }
-
-                null -> {}
-            }
-        }
-
-        if (recordType == RecordType.ClassWithMembersAndTypes) {
-            header.addAll(writeInt32Le(0))
-        }
-
-        header.addAll(memberBytes)
-
-        return header.toByteArray() to newStringRecs
+        return out.toByteArray() to newStringRecs
     }
 
     private fun encodePrimitiveValue(

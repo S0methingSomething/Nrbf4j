@@ -1,5 +1,6 @@
 package dev.nrbf4j
 
+import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
 
@@ -130,4 +131,13 @@ fun encodeLengthPrefixedString(value: String): ByteArray {
     val encoded = value.toByteArray(StandardCharsets.UTF_8)
     val lengthPrefix = encode7BitLength(encoded.size)
     return lengthPrefix + encoded
+}
+
+internal fun encodeLengthPrefixedStringTo(
+    value: String,
+    out: ByteArrayOutputStream,
+) {
+    val encoded = value.toByteArray(StandardCharsets.UTF_8)
+    out.write(encode7BitLength(encoded.size))
+    out.write(encoded)
 }

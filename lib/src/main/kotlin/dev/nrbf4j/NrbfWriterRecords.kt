@@ -9,10 +9,9 @@ fun NrbfWriter.binaryObjectString(
     objectId: Int,
     value: String,
 ): NrbfWriter {
-    val encoded = encodeLengthPrefixedString(value)
-    buf.add(RecordType.BinaryObjectString.id.toByte())
-    buf.addAll(writeInt32Le(objectId))
-    buf.addAll(encoded.toList())
+    writeByte(RecordType.BinaryObjectString.id)
+    writeInt32LeBytes(objectId)
+    writeBytes(encodeLengthPrefixedString(value))
     return this
 }
 
@@ -23,9 +22,9 @@ fun NrbfWriter.memberPrimitiveTyped(
     primitiveType: PrimitiveType,
     value: Any,
 ): NrbfWriter {
-    buf.add(RecordType.MemberPrimitiveTyped.id.toByte())
-    buf.add(primitiveType.id.toByte())
-    buf.addAll(encodePrimitiveBytes(primitiveType, value))
+    writeByte(RecordType.MemberPrimitiveTyped.id)
+    writeByte(primitiveType.id)
+    writeBytes(encodePrimitiveBytes(primitiveType, value))
     return this
 }
 
@@ -37,8 +36,8 @@ fun NrbfWriter.memberPrimitiveTyped(
  * Writes a [MemberReference][RecordType.MemberReference] record.
  */
 fun NrbfWriter.memberReference(idRef: Int): NrbfWriter {
-    buf.add(RecordType.MemberReference.id.toByte())
-    buf.addAll(writeInt32Le(idRef))
+    writeByte(RecordType.MemberReference.id)
+    writeInt32LeBytes(idRef)
     return this
 }
 
@@ -46,7 +45,7 @@ fun NrbfWriter.memberReference(idRef: Int): NrbfWriter {
  * Writes an [ObjectNull][RecordType.ObjectNull] record.
  */
 fun NrbfWriter.objectNull(): NrbfWriter {
-    buf.add(RecordType.ObjectNull.id.toByte())
+    writeByte(RecordType.ObjectNull.id)
     return this
 }
 
@@ -57,8 +56,8 @@ fun NrbfWriter.objectNullMultiple256(nullCount: Int): NrbfWriter {
     require(nullCount in 1..OBJECT_NULL_MULTIPLE_256_MAX) {
         "nullCount must be 1..$OBJECT_NULL_MULTIPLE_256_MAX, was $nullCount"
     }
-    buf.add(RecordType.ObjectNullMultiple256.id.toByte())
-    buf.add(nullCount.toByte())
+    writeByte(RecordType.ObjectNullMultiple256.id)
+    writeByte(nullCount)
     return this
 }
 
@@ -67,8 +66,8 @@ fun NrbfWriter.objectNullMultiple256(nullCount: Int): NrbfWriter {
  */
 fun NrbfWriter.objectNullMultiple(nullCount: Int): NrbfWriter {
     require(nullCount > 0) { "nullCount must be positive" }
-    buf.add(RecordType.ObjectNullMultiple.id.toByte())
-    buf.addAll(writeInt32Le(nullCount))
+    writeByte(RecordType.ObjectNullMultiple.id)
+    writeInt32LeBytes(nullCount)
     return this
 }
 
@@ -79,10 +78,9 @@ fun NrbfWriter.binaryLibrary(
     libraryId: Int,
     libraryName: String,
 ): NrbfWriter {
-    val encoded = encodeLengthPrefixedString(libraryName)
-    buf.add(RecordType.BinaryLibrary.id.toByte())
-    buf.addAll(writeInt32Le(libraryId))
-    buf.addAll(encoded.toList())
+    writeByte(RecordType.BinaryLibrary.id)
+    writeInt32LeBytes(libraryId)
+    writeBytes(encodeLengthPrefixedString(libraryName))
     return this
 }
 
@@ -108,56 +106,43 @@ fun NrbfWriter.classWithMembersAndTypes(
     require(members.size == memberValues.size) {
         "member count mismatch: ${members.size} defs vs ${memberValues.size} values"
     }
-    buf.add(RecordType.ClassWithMembersAndTypes.id.toByte())
-    buf.addAll(writeInt32Le(objectId))
-
-    val nameEncoded = encodeLengthPrefixedString(className)
-    buf.addAll(nameEncoded.toList())
-
-    buf.addAll(writeInt32Le(members.size))
+    writeByte(RecordType.ClassWithMembersAndTypes.id)
+    writeInt32LeBytes(objectId)
+    writeEncodedString(className)
+    writeInt32LeBytes(members.size)
 
     for (m in members) {
-        val encoded = encodeLengthPrefixedString(m.name)
-        buf.addAll(encoded.toList())
+        writeEncodedString(m.name)
     }
-
     for (m in members) {
-        buf.add(m.binaryType.id.toByte())
+        writeByte(m.binaryType.id)
     }
-
     for (m in members) {
         when (val ai = m.additionalInfo) {
             is PrimitiveType -> {
-                buf.add(ai.id.toByte())
+                writeByte(ai.id)
             }
 
             is String -> {
-                val encoded = encodeLengthPrefixedString(ai)
-                buf.addAll(encoded.toList())
+                writeEncodedString(ai)
             }
 
             is Pair<*, *> -> {
-                val (typeName, libId) = ai
-                val encoded = encodeLengthPrefixedString(typeName as String)
-                buf.addAll(encoded.toList())
-                buf.addAll(writeInt32Le(libId as Int))
+                writeEncodedString(ai.first as String)
+                writeInt32LeBytes(ai.second as Int)
             }
 
             null -> { /* no additional info needed */ }
         }
     }
 
-    if (libraryId != null) {
-        buf.addAll(writeInt32Le(libraryId))
-    } else {
-        buf.addAll(writeInt32Le(0))
-    }
+    writeInt32LeBytes(libraryId ?: 0)
 
     for (valueBytes in memberValues) {
         if (valueBytes == null) {
-            buf.add(RecordType.ObjectNull.id.toByte())
+            writeByte(RecordType.ObjectNull.id)
         } else {
-            buf.addAll(valueBytes)
+            valueBytes.forEach { writeByte(it.toInt()) }
         }
     }
 
@@ -175,15 +160,15 @@ fun NrbfWriter.classWithId(
     metadataId: Int,
     memberValues: List<List<Byte>?>,
 ): NrbfWriter {
-    buf.add(RecordType.ClassWithId.id.toByte())
-    buf.addAll(writeInt32Le(objectId))
-    buf.addAll(writeInt32Le(metadataId))
+    writeByte(RecordType.ClassWithId.id)
+    writeInt32LeBytes(objectId)
+    writeInt32LeBytes(metadataId)
 
     for (valueBytes in memberValues) {
         if (valueBytes == null) {
-            buf.add(RecordType.ObjectNull.id.toByte())
+            writeByte(RecordType.ObjectNull.id)
         } else {
-            buf.addAll(valueBytes)
+            valueBytes.forEach { writeByte(it.toInt()) }
         }
     }
 
@@ -201,38 +186,29 @@ fun NrbfWriter.systemClassWithMembersAndTypes(
     memberValues: List<List<Byte>?>,
 ): NrbfWriter {
     require(members.size == memberValues.size)
-    buf.add(RecordType.SystemClassWithMembersAndTypes.id.toByte())
-
-    val nameEncoded = encodeLengthPrefixedString(className)
-    buf.addAll(nameEncoded.toList())
-
-    buf.addAll(writeInt32Le(members.size))
+    writeByte(RecordType.SystemClassWithMembersAndTypes.id)
+    writeEncodedString(className)
+    writeInt32LeBytes(members.size)
 
     for (m in members) {
-        val encoded = encodeLengthPrefixedString(m.name)
-        buf.addAll(encoded.toList())
+        writeEncodedString(m.name)
     }
-
     for (m in members) {
-        buf.add(m.binaryType.id.toByte())
+        writeByte(m.binaryType.id)
     }
-
     for (m in members) {
         when (val ai = m.additionalInfo) {
             is PrimitiveType -> {
-                buf.add(ai.id.toByte())
+                writeByte(ai.id)
             }
 
             is String -> {
-                val encoded = encodeLengthPrefixedString(ai)
-                buf.addAll(encoded.toList())
+                writeEncodedString(ai)
             }
 
             is Pair<*, *> -> {
-                val (typeName, libId) = ai
-                val encoded = encodeLengthPrefixedString(typeName as String)
-                buf.addAll(encoded.toList())
-                buf.addAll(writeInt32Le(libId as Int))
+                writeEncodedString(ai.first as String)
+                writeInt32LeBytes(ai.second as Int)
             }
 
             null -> { /* no additional info needed */ }
@@ -241,9 +217,9 @@ fun NrbfWriter.systemClassWithMembersAndTypes(
 
     for (valueBytes in memberValues) {
         if (valueBytes == null) {
-            buf.add(RecordType.ObjectNull.id.toByte())
+            writeByte(RecordType.ObjectNull.id)
         } else {
-            buf.addAll(valueBytes)
+            valueBytes.forEach { writeByte(it.toInt()) }
         }
     }
 

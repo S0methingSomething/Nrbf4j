@@ -1,8 +1,11 @@
 package dev.nrbf4j
 
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+
+internal const val OUTPUT_BUFFER_PADDING = 4096
 
 internal const val OBJECT_NULL_MULTIPLE_256_MAX = 256
 
@@ -44,7 +47,7 @@ data class MemberDef(
  * ```
  */
 class NrbfWriter {
-    @PublishedApi internal val buf = mutableListOf<Byte>()
+    @PublishedApi internal val out = ByteArrayOutputStream()
 
     // region Stream framing --------------------------------------------------------
 
@@ -56,17 +59,17 @@ class NrbfWriter {
         majorVersion: Int = 1,
         minorVersion: Int = 0,
     ): NrbfWriter {
-        buf.add(RecordType.SerializedStreamHeader.id.toByte())
-        buf.addAll(writeInt32Le(1))
-        buf.addAll(writeInt32Le(1))
-        buf.addAll(writeInt32Le(majorVersion))
-        buf.addAll(writeInt32Le(minorVersion))
+        writeByte(RecordType.SerializedStreamHeader.id)
+        writeInt32LeBytes(1)
+        writeInt32LeBytes(1)
+        writeInt32LeBytes(majorVersion)
+        writeInt32LeBytes(minorVersion)
         return this
     }
 
     /** Appends the [MessageEnd][RecordType.MessageEnd] record. */
     fun messageEnd(): NrbfWriter {
-        buf.add(RecordType.MessageEnd.id.toByte())
+        writeByte(RecordType.MessageEnd.id)
         return this
     }
 
@@ -75,21 +78,48 @@ class NrbfWriter {
     // region Output -----------------------------------------------------------------
 
     /** Raw accumulated bytes. */
-    fun toByteArray(): ByteArray = buf.toByteArray()
+    fun toByteArray(): ByteArray = out.toByteArray()
 
     /** Writes the accumulated bytes to [file]. */
     fun writeTo(file: File) {
-        file.writeBytes(toByteArray())
+        file.writeBytes(out.toByteArray())
     }
 
     // endregion
 
     // region Internal helpers -------------------------------------------------------
 
+    @PublishedApi
+    internal fun writeByte(b: Int) {
+        out.write(b and BYTE_MASK)
+    }
+
+    @PublishedApi
+    internal fun writeBytes(bytes: ByteArray) {
+        out.write(bytes)
+    }
+
+    @PublishedApi
+    internal fun writeInt32LeBytes(value: Int) {
+        writeBytes(
+            ByteBuffer
+                .allocate(4)
+                .order(ByteOrder.LITTLE_ENDIAN)
+                .putInt(value)
+                .array(),
+        )
+    }
+
+    @PublishedApi
+    internal fun writeEncodedString(value: String) {
+        writeBytes(encodeLengthPrefixedString(value))
+    }
+
+    @PublishedApi
     internal fun encodePrimitiveBytes(
         type: PrimitiveType,
         value: Any,
-    ): List<Byte> =
+    ): ByteArray =
         ByteBuffer
             .allocate(type.byteSize.coerceAtLeast(8))
             .order(
@@ -166,7 +196,7 @@ class NrbfWriter {
                 }
             }.array()
             .take(type.byteSize.coerceAtLeast(0))
-            .toList()
+            .toByteArray()
 }
 
 // endregion

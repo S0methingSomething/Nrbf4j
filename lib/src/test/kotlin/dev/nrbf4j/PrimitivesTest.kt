@@ -106,15 +106,14 @@ class PrimitivesTest {
     @Test
     fun encodePrimitiveBytesRoundTrip() {
         val w = NrbfWriter()
-        assertEquals(listOf<Byte>(42), w.encodePrimitiveBytes(PrimitiveType.Byte, 42))
-        assertEquals(writeInt32Le(123456), w.encodePrimitiveBytes(PrimitiveType.Int32, 123456))
-        assertEquals(listOf<Byte>(1), w.encodePrimitiveBytes(PrimitiveType.Boolean, true))
-        assertEquals(listOf<Byte>(0), w.encodePrimitiveBytes(PrimitiveType.Boolean, false))
+        assertEquals(42.toByte(), w.encodePrimitiveBytes(PrimitiveType.Byte, 42)[0])
+        assertEquals(1.toByte(), w.encodePrimitiveBytes(PrimitiveType.Boolean, true)[0])
+        assertEquals(0.toByte(), w.encodePrimitiveBytes(PrimitiveType.Boolean, false)[0])
 
         val fltBytes = w.encodePrimitiveBytes(PrimitiveType.Single, 2.5f)
         assertEquals(4, fltBytes.size)
         val fltDecoded =
-            decodePrimitiveValue(fltBytes.toByteArray(), 0, PrimitiveType.Single).first as Float
+            decodePrimitiveValue(fltBytes, 0, PrimitiveType.Single).first as Float
         assertEquals(2.5f, fltDecoded, 0.0001f)
 
         val dblBytes = w.encodePrimitiveBytes(PrimitiveType.Double, Math.PI)

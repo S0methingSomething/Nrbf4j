@@ -120,6 +120,15 @@ internal fun writeInt32Le(value: Int): List<Byte> {
     return buf.array().toList()
 }
 
+internal fun writeInt32LeTo(
+    value: Int,
+    out: ByteArrayOutputStream,
+) {
+    val buf = ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN)
+    buf.putInt(value)
+    out.write(buf.array())
+}
+
 /**
  * Copies [size] bytes from [data] starting at [offset] into [out].
  */
