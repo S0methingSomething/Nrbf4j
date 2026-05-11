@@ -5,7 +5,7 @@ plugins {
     `maven-publish`
 }
 
-group = "com.github.yourusername"
+group = "io.github.s0methingsomething"
 version = "0.1.0"
 
 kotlin {
@@ -13,6 +13,11 @@ kotlin {
     compilerOptions {
         allWarningsAsErrors.set(true)
     }
+}
+
+java {
+    withJavadocJar()
+    withSourcesJar()
 }
 
 detekt {
@@ -38,6 +43,21 @@ publishing {
     publications {
         create<MavenPublication>("maven") {
             from(components["java"])
+            pom {
+                name.set("Nrbf4j")
+                description.set("Kotlin library for parsing and editing MS-NRBF (BinaryFormatter) byte streams")
+                url.set("https://github.com/S0methingSomething/Nrbf4j")
+            }
+        }
+    }
+    repositories {
+        maven {
+            name = "GitHubPackages"
+            url = uri("https://maven.pkg.github.com/S0methingSomething/Nrbf4j")
+            credentials {
+                username = System.getenv("GITHUB_ACTOR") ?: ""
+                password = System.getenv("GITHUB_TOKEN") ?: ""
+            }
         }
     }
 }
