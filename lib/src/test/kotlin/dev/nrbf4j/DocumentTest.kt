@@ -137,6 +137,98 @@ class DocumentTest {
     }
 
     @Test
+    fun editReferencedStringRoundTrip() {
+        val file =
+            createStream { w ->
+                w.binaryObjectString(99, "Original")
+                w.classWithMembersAndTypes(
+                    objectId = 100,
+                    className = "Data",
+                    members = listOf(MemberDef("Value", BinaryType.String)),
+                    memberValues = listOf(memberReferenceBytes(99)),
+                )
+            }
+
+        try {
+            val doc = NrbfDocument.open(file)
+            val obj = doc.objectNode(100)
+            val name = obj.member("Value")
+            assertEquals("Original", name.value)
+
+            name.set("Original [test]")
+
+            val outFile = File.createTempFile("nrbf4j_out", ".bin")
+            try {
+                doc.write(outFile)
+                assertEquals(file.length() + STRING_TEST_SUFFIX_LENGTH, outFile.length())
+
+                val doc2 = NrbfDocument.open(outFile)
+                assertEquals("Original [test]", doc2.objectNode(100).member("Value").value)
+                doc2.close()
+            } finally {
+                outFile.delete()
+            }
+            doc.close()
+        } finally {
+            file.delete()
+        }
+    }
+
+    @Test
+    fun editNestedStringPreservesInlineClassRecord() {
+        val nestedChild =
+            classWithMembersAndTypesBytes(
+                objectId = 200,
+                className = "Child",
+                members = listOf(MemberDef("Age", BinaryType.Primitive, PrimitiveType.Int32)),
+                memberValues = listOf(writeInt32Le(5)),
+            )
+        val file =
+            createStream { w ->
+                w.classWithMembersAndTypes(
+                    objectId = 100,
+                    className = "Parent",
+                    members =
+                        listOf(
+                            MemberDef("Name", BinaryType.String),
+                            MemberDef("Child", BinaryType.Object),
+                        ),
+                    memberValues =
+                        listOf(
+                            binaryObjectStringBytes(99, "Original"),
+                            nestedChild,
+                        ),
+                )
+            }
+
+        try {
+            val doc = NrbfDocument.open(file)
+            val obj = doc.objectNode(100)
+            assertEquals("Original", obj.member("Name").value)
+            assertEquals(200, obj.member("Child").value)
+
+            obj.member("Name").set("Original [test]")
+
+            val outFile = File.createTempFile("nrbf4j_out", ".bin")
+            try {
+                doc.write(outFile)
+                assertEquals(file.length() + STRING_TEST_SUFFIX_LENGTH, outFile.length())
+
+                val doc2 = NrbfDocument.open(outFile)
+                val obj2 = doc2.objectNode(100)
+                assertEquals("Original [test]", obj2.member("Name").value)
+                assertEquals(200, obj2.member("Child").value)
+                doc2.close()
+            } finally {
+                outFile.delete()
+            }
+            doc.close()
+        } finally {
+            file.delete()
+        }
+    }
+
+    @Test
     fun simpleArrayDetection() {
         val file =
             createStream { w ->
@@ -181,5 +273,35 @@ class DocumentTest {
         val file = File.createTempFile("nrbf4j_test", ".bin")
         w.writeTo(file)
         return file
+    }
+
+    private fun binaryObjectStringBytes(
+        objectId: Int,
+        value: String,
+    ): List<Byte> =
+        listOf(RecordType.BinaryObjectString.id.toByte()) +
+            writeInt32Le(objectId) +
+            encodeLengthPrefixedString(value).toList()
+
+    private fun memberReferenceBytes(objectId: Int): List<Byte> {
+        val bytes = memberReferencePrefix()
+        return bytes + writeInt32Le(objectId)
+    }
+
+    private fun memberReferencePrefix(): List<Byte> = listOf(RecordType.MemberReference.id.toByte())
+
+    private fun classWithMembersAndTypesBytes(
+        objectId: Int,
+        className: String,
+        members: List<MemberDef>,
+        memberValues: List<List<Byte>>,
+    ): List<Byte> {
+        val w = NrbfWriter()
+        w.classWithMembersAndTypes(objectId, className, members, memberValues)
+        return w.toByteArray().toList()
+    }
+
+    private companion object {
+        private const val STRING_TEST_SUFFIX_LENGTH = 7L
     }
 }

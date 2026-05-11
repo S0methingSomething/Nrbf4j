@@ -8,6 +8,7 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 private const val MAX_OBJECT_ID_ALLOCATED = 10_000_000
+internal const val MIN_BINARY_OBJECT_STRING_SIZE = 6
 
 /**
  * Full-editor representation of an MS-NRBF binary stream.
@@ -159,6 +160,7 @@ class NrbfDocument internal constructor(
     fun write(outputFile: File) {
         checkNotClosed()
         val out = ByteArrayOutputStream(data.size + OUTPUT_BUFFER_PADDING)
+        val nestedDirtyStrings = nestedDirtyStrings()
 
         val rowCount = index.size / INDEX_STRIDE
         var newStrings = listOf<Pair<Int, String>>()
@@ -178,7 +180,7 @@ class NrbfDocument internal constructor(
                 recordType == RecordType.BinaryObjectString && objectId != NO_VALUE -> {
                     val dirty = dirtyValues.filterKeys { (oid, _) -> oid == objectId }
                     if (dirty.isEmpty()) {
-                        copyRaw(data, offset, size, out)
+                        copyRawReplacingNestedStrings(data, offset, size, out, nestedDirtyStrings)
                     } else {
                         val newValue = dirty.values.single() as? String ?: ""
                         val encoded = encodeLengthPrefixedString(newValue)
@@ -194,7 +196,7 @@ class NrbfDocument internal constructor(
                 ) && objectId != NO_VALUE -> {
                     val dirtyFiltered = dirtyValues.filterKeys { (oid, _) -> oid == objectId }
                     if (dirtyFiltered.isEmpty()) {
-                        copyRaw(data, offset, size, out)
+                        copyRawReplacingNestedStrings(data, offset, size, out, nestedDirtyStrings)
                     } else {
                         val layout =
                             classLayouts[objectId]
@@ -209,7 +211,7 @@ class NrbfDocument internal constructor(
                 recordType == RecordType.ClassWithId && objectId != NO_VALUE -> {
                     val dirtyFiltered = dirtyValues.filterKeys { (oid, _) -> oid == objectId }
                     if (dirtyFiltered.isEmpty()) {
-                        copyRaw(data, offset, size, out)
+                        copyRawReplacingNestedStrings(data, offset, size, out, nestedDirtyStrings)
                     } else {
                         val metadataId = index[row + IX_METADATA_ID]
                         val layout =
@@ -222,7 +224,7 @@ class NrbfDocument internal constructor(
                 }
 
                 else -> {
-                    copyRaw(data, offset, size, out)
+                    copyRawReplacingNestedStrings(data, offset, size, out, nestedDirtyStrings)
                 }
             }
         }
@@ -247,6 +249,17 @@ class NrbfDocument internal constructor(
         decodedObjects.clear()
         dirtyValues.clear()
     }
+
+    private fun nestedDirtyStrings(): Map<Int, String> =
+        dirtyValues
+            .mapNotNull { (key, value) ->
+                val objectId = key.first
+                if (value is String && !objectIdToRow.containsKey(objectId)) {
+                    objectId to value
+                } else {
+                    null
+                }
+            }.toMap()
 
     // endregion
 
@@ -355,10 +368,27 @@ class NrbfDocument internal constructor(
                 else -> {
                     val memberStart = cursor
                     val subType = RecordType.fromId(data[cursor].toInt() and BYTE_MASK)
-                    val value = decodeSubRecord(data, cursor, bt, layout.additionalInfos[i])
-                    result.add(MemberNode(this, objectId, layout.memberNames[i], bt, value))
+                    val stringObjectId =
+                        if (bt == BinaryType.String) {
+                            when (subType) {
+                                RecordType.BinaryObjectString,
+                                RecordType.MemberReference,
+                                -> readInt32At(data, cursor + 1)
 
-                    val subResult = scanRecordEnd(data, cursor, mutableMapOf())
+                                else -> null
+                            }
+                        } else {
+                            null
+                        }
+                    val value =
+                        if (stringObjectId != null) {
+                            decodeStringObject(stringObjectId)
+                        } else {
+                            decodeSubRecord(data, cursor, bt, layout.additionalInfos[i])
+                        }
+                    result.add(MemberNode(this, objectId, layout.memberNames[i], bt, value, stringObjectId))
+
+                    val subResult = scanRecordEnd(data, cursor, classLayouts)
                     cursor = subResult.endOffset
 
                     when (subType) {
@@ -403,6 +433,7 @@ class NrbfDocument internal constructor(
             bt == BinaryType.String -> {
                 when (subType) {
                     RecordType.BinaryObjectString -> decodeLengthPrefixedStringAt(data, offset + 5).first
+                    RecordType.MemberReference -> decodeStringObject(readInt32At(data, offset + 1))
                     else -> throw NrbfFormatException("unexpected string member type $typeByte at offset $offset")
                 }
             }
@@ -416,6 +447,13 @@ class NrbfDocument internal constructor(
                     RecordType.ClassWithId -> {
                         val objId = readInt32At(data, offset + 1)
                         objId
+                    }
+
+                    RecordType.SystemClassWithMembersAndTypes,
+                    RecordType.ClassWithMembersAndTypes,
+                    -> {
+                        val result = scanRecordEnd(data, offset, classLayouts)
+                        result.objectId
                     }
 
                     else -> {
@@ -438,7 +476,7 @@ class NrbfDocument internal constructor(
                     RecordType.ArraySingleString,
                     RecordType.ArraySinglePrimitive,
                     -> {
-                        val result = scanRecordEnd(data, offset, mutableMapOf())
+                        val result = scanRecordEnd(data, offset, classLayouts)
                         result.objectId
                     }
 
@@ -454,6 +492,42 @@ class NrbfDocument internal constructor(
                 throw NrbfFormatException("cannot decode member of type $bt at offset $offset")
             }
         }
+    }
+
+    private fun decodeStringObject(objectId: Int): String {
+        val rowNumber = objectIdToRow[objectId]
+        if (rowNumber != null) {
+            val row = rowNumber * INDEX_STRIDE
+            val offset = index[row + IX_OFFSET]
+            val recordType = RecordType.fromId(index[row + IX_RECORD_TYPE])
+            if (recordType != RecordType.BinaryObjectString) {
+                throw NrbfFormatException("object $objectId is a ${recordType.name}, not a string record")
+            }
+            return decodeLengthPrefixedStringAt(data, offset + 5).first
+        }
+
+        val offset =
+            findNestedBinaryObjectStringOffset(objectId)
+                ?: throw ObjectNotFoundException("object $objectId not found")
+        return decodeLengthPrefixedStringAt(data, offset + 5).first
+    }
+
+    private fun findNestedBinaryObjectStringOffset(objectId: Int): Int? {
+        var cursor = 0
+        while (cursor <= data.size - MIN_BINARY_OBJECT_STRING_SIZE) {
+            if ((data[cursor].toInt() and BYTE_MASK) == RecordType.BinaryObjectString.id &&
+                readInt32At(data, cursor + 1) == objectId
+            ) {
+                try {
+                    decodeLengthPrefixedStringAt(data, cursor + 5)
+                    return cursor
+                } catch (_: NrbfException) {
+                    // False positive in payload bytes; continue scanning.
+                }
+            }
+            cursor += 1
+        }
+        return null
     }
 
     // endregion
@@ -498,7 +572,6 @@ class NrbfDocument internal constructor(
                 bt == BinaryType.String -> {
                     val str = value as? String ?: ""
                     val newId = allocateObjectId()
-                    newStringRecs.add(newId to str)
                     out.write(RecordType.BinaryObjectString.id and BYTE_MASK)
                     writeInt32LeTo(newId, out)
                     encodeLengthPrefixedStringTo(str, out)
@@ -600,7 +673,6 @@ class NrbfDocument internal constructor(
                 bt == BinaryType.String -> {
                     val str = value as? String ?: ""
                     val newId = allocateObjectId()
-                    newStringRecs.add(newId to str)
                     out.write(RecordType.BinaryObjectString.id and BYTE_MASK)
                     writeInt32LeTo(newId, out)
                     encodeLengthPrefixedStringTo(str, out)
@@ -760,6 +832,7 @@ class MemberNode(
     /** NRBF binary type indicating the member's value category. */
     val type: BinaryType,
     initialValue: Any?,
+    private val stringReferenceObjectId: Int? = null,
 ) {
     private var dirtyValue: Any? = null
     private var isDirty = false
@@ -772,7 +845,11 @@ class MemberNode(
     fun set(newValue: Any?) {
         isDirty = true
         dirtyValue = newValue
-        doc.putDirty(objectId, name, newValue)
+        if (stringReferenceObjectId != null && newValue is String) {
+            doc.putDirty(stringReferenceObjectId, name, newValue)
+        } else {
+            doc.putDirty(objectId, name, newValue)
+        }
     }
 
     /** De-references this member as an object ID, returning the [ObjectNode]. */
