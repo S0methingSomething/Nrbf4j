@@ -1,0 +1,92 @@
+build:
+  maxIssues: 0
+
+config:
+  validation: true
+
+comments:
+  active: true
+
+  AbsentOrWrongFileLicense:
+    active: false
+
+  CommentOverPrivateFunction:
+    active: true
+
+  CommentOverPrivateProperty:
+    active: true
+
+  DeprecatedBlockTag:
+    active: true
+
+  EndOfSentenceFormat:
+    active: true
+    endOfSentenceFormat: '([.?!][ \t\n\r\f<])|([.?!:]$)'
+
+  KDocReferencesNonPublicProperty:
+    active: true
+
+  OutdatedDocumentation:
+    active: true
+    matchTypeParameters: true
+    matchDeclarationsOrder: true
+    allowParamOnConstructorProperties: false
+
+  UndocumentedPublicClass:
+    active: true
+    searchInNestedClass: true
+    searchInInnerClass: true
+    searchInInnerObject: true
+    searchInInnerInterface: true
+    searchInProtectedClass: true
+
+  UndocumentedPublicFunction:
+    active: true
+    searchProtectedFunction: true
+
+  UndocumentedPublicProperty:
+    active: true
+    searchProtectedProperty: true
+
+complexity:
+  CyclomaticComplexMethod:
+    active: false
+  LongParameterList:
+    active: false
+  LongMethod:
+    active: false
+  NestedBlockDepth:
+    active: false
+
+style:
+  MagicNumber:
+    active: true
+    ignoreNumbers:
+      - '-1'
+      - '0'
+      - '1'
+      - '2'
+      - '3'
+      - '4'
+      - '5'
+      - '6'
+      - '7'
+      - '8'
+      - '9'
+      - '10'
+      - '11'
+      - '12'
+      - '13'
+      - '14'
+      - '15'
+      - '16'
+      - '17'
+      - '18'
+      - '21'
+      - '22'
+  ReturnCount:
+    active: false
+  ThrowsCount:
+    active: false
+  LoopWithTooManyJumpStatements:
+    active: false

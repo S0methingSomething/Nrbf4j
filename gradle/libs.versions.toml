@@ -1,0 +1,14 @@
+[versions]
+kotlin = "2.3.21"
+detekt = "1.23.8"
+spotless = "8.4.0"
+junit4 = "4.13.2"
+
+[libraries]
+junit4 = { module = "junit:junit", version.ref = "junit4" }
+kotlin-test = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlin" }
+
+[plugins]
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+detekt = { id = "io.gitlab.arturbosch.detekt", version.ref = "detekt" }
+spotless = { id = "com.diffplug.spotless", version.ref = "spotless" }
