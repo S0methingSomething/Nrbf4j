@@ -130,7 +130,7 @@ class ReaderTest {
 
                 w.classWithMembersAndTypes(
                     objectId = 50,
-                    className = "SimPersonName",
+                    className = "PersonName",
                     members =
                         listOf(
                             MemberDef("FirstName", BinaryType.String),
@@ -171,68 +171,6 @@ class ReaderTest {
         try {
             val name = reader.readPersonFullName(2)
             assertEquals("John Doe", name)
-        } finally {
-            reader.close()
-            file.delete()
-        }
-    }
-
-    @Test
-    fun readHeroNameDisplay() {
-        val file =
-            createStream { w ->
-                val heroStr =
-                    listOf(RecordType.BinaryObjectString.id.toByte()) +
-                        writeInt32Le(10) +
-                        encodeLengthPrefixedString("Hero").toList()
-                val nameStr =
-                    listOf(RecordType.BinaryObjectString.id.toByte()) +
-                        writeInt32Le(11) +
-                        encodeLengthPrefixedString("Name").toList()
-
-                w.classWithMembersAndTypes(
-                    objectId = 50,
-                    className = "SimPersonName",
-                    members =
-                        listOf(
-                            MemberDef("FirstName", BinaryType.String),
-                            MemberDef("LastName", BinaryType.String),
-                        ),
-                    memberValues = listOf(heroStr, nameStr),
-                )
-                w.classWithId(
-                    objectId = 1,
-                    metadataId = 50,
-                    memberValues = listOf(heroStr, nameStr),
-                )
-
-                w.classWithMembersAndTypes(
-                    objectId = 60,
-                    className = "SimHero",
-                    members =
-                        listOf(
-                            MemberDef("Name", BinaryType.Class, Pair("SimPersonName", 0)),
-                        ),
-                    memberValues =
-                        listOf(
-                            listOf(RecordType.MemberReference.id.toByte()) +
-                                writeInt32Le(1),
-                        ),
-                )
-                w.classWithId(
-                    objectId = 2,
-                    metadataId = 60,
-                    memberValues =
-                        listOf(
-                            listOf(RecordType.MemberReference.id.toByte()) +
-                                writeInt32Le(1),
-                        ),
-                )
-            }
-        val reader = NrbfReader.open(file)
-        try {
-            val name = reader.readHeroNameDisplay(2)
-            assertEquals("Hero Name", name)
         } finally {
             reader.close()
             file.delete()

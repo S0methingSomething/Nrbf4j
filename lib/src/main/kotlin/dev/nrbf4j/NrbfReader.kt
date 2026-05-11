@@ -120,11 +120,11 @@ class NrbfReader private constructor(
 
     // endregion
 
-    // region Convenience methods for BitLife save files ----------------------------
+    // region Convenience name resolution -------------------------------------------
 
     /**
-     * Returns the full name (firstName + lastName) of the SimPersonName
-     * object referenced from [personObjectId].
+     * Resolves a full name by following `Name → FirstName + LastName` through
+     * [MemberReference] indirection from [personObjectId].
      */
     fun readPersonFullName(personObjectId: Int): String {
         val nameObjId = readMemberRef(personObjectId, "Name")
@@ -132,13 +132,6 @@ class NrbfReader private constructor(
         val lastName = readMember(nameObjId, "LastName") as? String ?: ""
         return "$firstName $lastName".trim()
     }
-
-    /**
-     * Reads the [heroFirstName] and [heroLastName] member values from the
-     * `Name`-referenced SimPersonName object on the SimHero identified by
-     * [heroObjectId].
-     */
-    fun readHeroNameDisplay(heroObjectId: Int): String = readPersonFullName(heroObjectId)
 
     // endregion
 
