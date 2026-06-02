@@ -42,6 +42,18 @@ data class ClassLayout(
 )
 
 /**
+ * Byte span of a single member value within its parent record.
+ *
+ * [relativeOffset] is measured from the record content start (after the
+ * record header). [byteSize] is the total bytes occupied by the member
+ * value, including any nested sub-record framing.
+ */
+data class MemberSpan(
+    val relativeOffset: Int,
+    val byteSize: Int,
+)
+
+/**
  * Single result produced by [scanRecords].
  *
  * Contains the flat scan index, object-id lookup table, and class layout registry.
@@ -53,6 +65,8 @@ data class ScanResult(
     val objectIdToRow: Map<Int, Int>,
     /** Maps class-definition object IDs to their parsed [ClassLayout]. */
     val classLayouts: Map<Int, ClassLayout>,
+    /** Maps object IDs to per-member byte spans (member-start relative to record start). */
+    val memberSpans: Map<Int, List<MemberSpan>>,
 )
 
 // endregion
@@ -66,11 +80,19 @@ data class ScanResult(
  * The scan performs a single forward pass through [data].  For class-definition
  * records the member layout is registered so that later [RecordType.ClassWithId]
  * records can resolve their metadata references.
+ *
+ * If [existingClassDefs] are supplied they seed the class-definition table
+ * so that records whose metadata moved during a rebuild are still recognised.
  */
-fun scanRecords(data: ByteArray): ScanResult {
+fun scanRecords(
+    data: ByteArray,
+    existingClassDefs: Map<Int, ClassLayout> = emptyMap(),
+): ScanResult {
     val rows = mutableListOf<IntArray>()
     val objectIdToRow = mutableMapOf<Int, Int>()
     val classDefs = mutableMapOf<Int, ClassLayout>()
+    classDefs.putAll(existingClassDefs)
+    val memberSpansMap = mutableMapOf<Int, List<MemberSpan>>()
 
     var offset = 0
     val totalSize = data.size
@@ -96,6 +118,10 @@ fun scanRecords(data: ByteArray): ScanResult {
             objectIdToRow[result.objectId] = rowPos
         }
 
+        if (result.objectId != null && result.memberSpans != null) {
+            memberSpansMap[result.objectId] = result.memberSpans
+        }
+
         offset = result.endOffset
 
         if (recordType == RecordType.MessageEnd) {
@@ -114,7 +140,7 @@ fun scanRecords(data: ByteArray): ScanResult {
         row.copyInto(flat, base, 0, INDEX_STRIDE)
     }
 
-    return ScanResult(flat, objectIdToRow, classDefs)
+    return ScanResult(flat, objectIdToRow, classDefs, memberSpansMap)
 }
 
 // endregion
@@ -128,6 +154,7 @@ internal class ScanRecordResult(
     val libraryId: Int? = null,
     val referenceId: Int? = null,
     val metadataId: Int? = null,
+    val memberSpans: List<MemberSpan>? = null,
 )
 
 /**
@@ -435,7 +462,8 @@ private fun scanClassWithMembersAndTypes(
         )
 
     // Walk through member values to find the true end of this record.
-    cursor =
+    val memberValuesStart = cursor
+    val (endCursor, spans) =
         walkClassMembers(
             data,
             cursor,
@@ -444,8 +472,22 @@ private fun scanClassWithMembersAndTypes(
             typeInfo.additionalInfos,
             classDefs,
         )
+    cursor = endCursor
 
-    return ScanRecordResult(cursor, objectId = classInfo.objectId, libraryId = libraryId)
+    val recordSpans =
+        spans.map {
+            MemberSpan(
+                relativeOffset = it.relativeOffset + (memberValuesStart - offset),
+                byteSize = it.byteSize,
+            )
+        }
+
+    return ScanRecordResult(
+        cursor,
+        objectId = classInfo.objectId,
+        libraryId = libraryId,
+        memberSpans = recordSpans,
+    )
 }
 
 private fun scanClassWithId(
@@ -460,7 +502,7 @@ private fun scanClassWithId(
         classDefs[metadataId]
             ?: throw NrbfFormatException("ClassWithId $objectId references unknown metadata $metadataId")
 
-    val end =
+    val (endCursor, spans) =
         walkClassMembers(
             data,
             offset + 9,
@@ -470,7 +512,15 @@ private fun scanClassWithId(
             classDefs,
         )
 
-    return ScanRecordResult(end, objectId = objectId, metadataId = metadataId)
+    val recordSpans =
+        spans.map { MemberSpan(relativeOffset = it.relativeOffset + 9, byteSize = it.byteSize) }
+
+    return ScanRecordResult(
+        endCursor,
+        objectId = objectId,
+        metadataId = metadataId,
+        memberSpans = recordSpans,
+    )
 }
 
 internal data class ParseClassInfoResult(
@@ -555,7 +605,8 @@ internal fun parseMemberTypeInfo(
 /**
  * Walks from [offset] through every member value in a class record.
  * Handles inlined primitives, nested sub-records, and null-run collapsing.
- * Returns the offset immediately after the last member.
+ * Returns the offset immediately after the last member, together with
+ * per-member byte spans relative to [offset].
  */
 internal fun walkClassMembers(
     data: ByteArray,
@@ -564,15 +615,20 @@ internal fun walkClassMembers(
     binaryTypes: List<BinaryType>,
     additionalInfos: List<Any?>,
     classDefs: MutableMap<Int, ClassLayout>,
-): Int {
+): Pair<Int, List<MemberSpan>> {
     var cursor = offset
     var remainingNulls = 0
+    val spans = mutableListOf<MemberSpan>()
 
     for (i in memberNames.indices) {
         if (remainingNulls > 0) {
             remainingNulls -= 1
+            spans.add(MemberSpan(relativeOffset = cursor - offset, byteSize = 0))
             continue
         }
+
+        val memberStart = cursor
+        val memberRelative = memberStart - offset
 
         val bt = binaryTypes[i]
         val ai = additionalInfos[i]
@@ -582,15 +638,16 @@ internal fun walkClassMembers(
                 val primType = ai as PrimitiveType
                 val (_, consumed) = decodePrimitiveValue(data, cursor, primType)
                 cursor += consumed
+                spans.add(MemberSpan(relativeOffset = memberRelative, byteSize = consumed))
             }
 
             else -> {
                 // Every non-primitive member is a nested NRBF record.
-                val memberStart = cursor
                 @Suppress("UNUSED_EXPRESSION")
                 data[cursor]
                 val result = scanRecordEnd(data, cursor, classDefs)
                 cursor = result.endOffset
+                spans.add(MemberSpan(relativeOffset = memberRelative, byteSize = cursor - memberStart))
 
                 // Handle null runs produced by ObjectNullMultiple* sub-records.
                 val subType = RecordType.fromId(data[memberStart].toInt() and 0xFF)
@@ -609,7 +666,7 @@ internal fun walkClassMembers(
         }
     }
 
-    return cursor
+    return cursor to spans
 }
 
 // endregion

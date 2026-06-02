@@ -8,3 +8,4 @@ local.properties
 out/
 ARCHITECTURE.md
 .gradle/
+lib/src/test/kotlin/dev/nrbf4j/ProfileTest.kt

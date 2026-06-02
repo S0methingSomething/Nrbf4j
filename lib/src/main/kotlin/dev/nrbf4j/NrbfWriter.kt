@@ -155,7 +155,7 @@ class NrbfWriter {
                     }
 
                     PrimitiveType.UInt32 -> {
-                        buf.putInt(value as Int)
+                        buf.putInt((value as Number).toInt())
                     }
 
                     PrimitiveType.Int64 -> {

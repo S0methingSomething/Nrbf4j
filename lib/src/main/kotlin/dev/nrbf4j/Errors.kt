@@ -43,3 +43,10 @@ class NrbfFormatException(
     message: String,
     cause: Throwable? = null,
 ) : NrbfException(message, cause)
+
+/**
+ * Raised when a post-write integrity check detects byte corruption.
+ */
+class NrbfIntegrityException(
+    message: String,
+) : NrbfException(message)
